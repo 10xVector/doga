@@ -1,0 +1,23 @@
+Request data:
+{'contents': [{'parts': [{'text': "Today's grammar is: Partial List using 'や'. The particle 'や' is used to mention a few items from a list, implying that there are other items not mentioned. Example: りんごやバナナをかいました。, which means I bought apples and bananas, among other things.."}]}], 'responseModalities': ['AUDIO'], 'speechConfig': {'voiceConfig': {'prebuiltVoiceConfig': {'voiceName': 'Kore'}}}}
+Error response:
+{
+  "error": {
+    "code": 400,
+    "message": "Invalid JSON payload received. Unknown name \"responseModalities\": Cannot find field.\nInvalid JSON payload received. Unknown name \"speechConfig\": Cannot find field.",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        "fieldViolations": [
+          {
+            "description": "Invalid JSON payload received. Unknown name \"responseModalities\": Cannot find field."
+          },
+          {
+            "description": "Invalid JSON payload received. Unknown name \"speechConfig\": Cannot find field."
+          }
+        ]
+      }
+    ]
+  }
+}
