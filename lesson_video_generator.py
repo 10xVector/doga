@@ -5,7 +5,9 @@ import json
 import moviepy.video.io.ImageSequenceClip
 from moviepy.video.VideoClip import ImageClip, TextClip
 from moviepy.video.compositing.CompositeVideoClip import CompositeVideoClip
+from moviepy.video.VideoClip import ColorClip
 from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.audio.AudioClip import CompositeAudioClip
 from PIL import Image
 import requests
 import openai
@@ -33,8 +35,12 @@ def generate_lesson():
     - explanation: a concise explanation of the grammar point in English (1-2 sentences)
     - japanese: an example sentence in Japanese using the grammar (use only Japanese script: hiragana, katakana, kanji; do not use romaji)
     - english: the English translation of the example sentence (full sentence, no abbreviations)
+    - extra: additional information such as common mistakes, related grammar points, or usage tips (1-2 sentences, in English, after the examples)
+
+    Please encourage variety and novelty in your choice of grammar point. If a common grammar point (like 〜ながら, 〜たい, 〜ている) has not been used yet, it is okay to use it, but otherwise try to pick a less common, more casual, or more conversational grammar point or word. Avoid repeating grammar points within the same session. Include casual or conversational Japanese when possible.
+
     Example:
-    {\"grammar\": \"...\", \"explanation\": \"...\", \"japanese\": \"...\", \"english\": \"...\"}
+    {"grammar": "...", "explanation": "...", "japanese": "...", "english": "...", "extra": "..."}
     """
     response = client.chat.completions.create(
         model="gpt-4o",
@@ -55,7 +61,8 @@ def generate_lesson():
         "grammar": norm.get("grammar", ""),
         "explanation": norm.get("explanation", ""),
         "japanese": norm.get("japanese", norm.get("japanesesentence", norm.get("sentence", ""))),
-        "english": norm.get("english", norm.get("englishtranslation", norm.get("translation", "")))
+        "english": norm.get("english", norm.get("englishtranslation", norm.get("translation", ""))),
+        "extra": norm.get("extra", "")
     }
 
 # --- Step 2: Generate TTS audio ---
@@ -104,7 +111,12 @@ def generate_audio(text, lang, filename, voice_name=None):
             f.write(response.text)
         sys.stdout.flush()
         response.raise_for_status()
-    audio_b64 = response.json()["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
+    response_json = response.json()
+    if "candidates" not in response_json or "content" not in response_json["candidates"][0]:
+        print("Gemini TTS API error or unexpected response:")
+        print(json.dumps(response_json, indent=2))
+        raise RuntimeError("Gemini TTS API did not return expected audio content.")
+    audio_b64 = response_json["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
     pcm_data = base64.b64decode(audio_b64)
     with wave.open(filename, "wb") as wavfile:
         wavfile.setnchannels(1)
@@ -187,12 +199,45 @@ def make_talking_animation(start, duration, height=720, audio_file="en.wav"):
     
     return clips
 
+def concatenate_videoclips(clips):
+    t = 0
+    new_clips = []
+    for clip in clips:
+        new_clip = clip.with_start(t)
+        new_clips.append(new_clip)
+        t += clip.duration
+    return CompositeVideoClip(new_clips, size=clips[0].size)
+
 # --- Step 3: Create the video ---
 def create_video(lesson):
+    # --- INTRO CLIP ---
+    # Generate TTS for the avatar's intro line
+    intro_line = "Grammar tip!"
+    generate_audio(intro_line, 'en', "intro_tts.wav", voice_name='Kore')
+    intro_voice = AudioFileClip("intro_tts.wav")
+    intro_sfx = AudioFileClip("intro_sound.mp3").subclipped(0, intro_voice.duration)
+    intro_audio = CompositeAudioClip([intro_voice, intro_sfx]).with_duration(intro_voice.duration)
+    intro_duration = intro_voice.duration
+    intro_text = TextClip(
+        text="日本語文法のヒント！",  # "Here's a Japanese grammar tip!"
+        font="/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        font_size=100,
+        color="white",
+        size=(1280, 200),
+        method="caption"
+    ).with_position(("center", "center")).with_duration(intro_duration)
+    intro_bg = ColorClip(size=(1280, 720), color=(30, 144, 255)).with_duration(intro_duration)  # Dodger blue
+    intro_avatar = ImageClip(CLOSE_MOUTH).with_duration(intro_duration).with_position(("center", 400)).resized(height=300)
+    intro_clip = CompositeVideoClip([intro_bg, intro_avatar, intro_text]).with_audio(intro_audio)
+
+    # --- MAIN LESSON CLIP ---
     # Build teacher-style narration: include explanation
+    cta_line = "Try making your own sentence with this grammar in the comments, and follow Sekai Meetup for more Japanese tips!"
     english_narration = (
-        f"Today's grammar is: {lesson['grammar']}. {lesson['explanation']} "
-        f"Example: {lesson['japanese']}, which means {lesson['english']}."
+        f"Here's a Japanese grammar tip: {lesson['grammar']}. {lesson['explanation']} "
+        f"Example: {lesson['japanese']}, which means {lesson['english']}. "
+        f"{lesson.get('extra', '')} "
+        f"{cta_line}"
     )
     # English narration (Gemini TTS)
     generate_audio(english_narration, 'en', "en.wav", voice_name='Kore')
@@ -218,34 +263,40 @@ def create_video(lesson):
 
     # Add grammar point text to the right of the avatar
     grammar_text = TextClip(
-        text=lesson['grammar'],
+        text=lesson['grammar'],  # Using Japanese characters
         font="/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-        font_size=70,
+        font_size=60,
         color="black",
         method='caption',
         size=(500, None)
     ).with_position((600, 200)).with_duration(audio.duration)
 
-    video = CompositeVideoClip([
+    main_clip = CompositeVideoClip([
         background,
         *avatar_clips,
         avatar_neutral,
         grammar_text
     ]).with_audio(audio)
 
-    print(f"audio.duration: {audio.duration}")
-    print(f"total_duration: {total_duration}")
-    print(f"background duration: {background.duration}")
-    if avatar_clips:
-        print(f"first avatar_clip duration: {avatar_clips[0].duration}")
-        print(f"last avatar_clip duration: {avatar_clips[-1].duration}")
-        print(f"first avatar_clip start: {avatar_clips[0].start}")
-        print(f"last avatar_clip start: {avatar_clips[-1].start}")
-    print(f"avatar_neutral duration: {avatar_neutral.duration}")
-    print(f"grammar_text duration: {grammar_text.duration}")
+    # --- OUTRO CLIP ---
+    # (Optional) Overlay CTA text visually at the end of the main lesson
+    # To do this, you could add a TextClip with .with_start(audio.duration - X) and .with_duration(Y)
 
-    print(f"final video duration: {video.duration}")
-    video.write_videofile("lesson_output.mp4", fps=24)
+    # --- CONCATENATE INTRO AND MAIN CLIP ---
+    # Export intro and main clips as temporary files
+    intro_clip.write_videofile("intro_temp.mp4", fps=24)
+    main_clip.write_videofile("main_temp.mp4", fps=24)
+
+    from moviepy.video.io.VideoFileClip import VideoFileClip
+    intro_video = VideoFileClip("intro_temp.mp4")
+    main_video = VideoFileClip("main_temp.mp4")
+
+    # --- CONCATENATE ALL CLIPS ---
+    final_video = CompositeVideoClip([
+        intro_video,
+        main_video.with_start(intro_video.duration)
+    ], size=intro_video.size)
+    final_video.write_videofile("lesson_output.mp4", fps=24)
 
 # --- Run the Pipeline ---
 if __name__ == "__main__":
